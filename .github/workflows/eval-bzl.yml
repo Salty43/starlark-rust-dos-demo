@@ -1,0 +1,35 @@
+name: Evaluate changed Starlark files
+
+on:
+  pull_request:
+    paths:
+      - '**/*.bzl'
+      - '**/*.star'
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build starlark CLI
+        run: cargo build --release -p starlark_bin
+
+      - name: Find changed .bzl/.star files
+        id: changed
+        run: |
+          git fetch origin ${{ github.event.pull_request.base.ref }} --depth=1
+          files=$(git diff --name-only origin/${{ github.event.pull_request.base.ref }}...HEAD -- '*.bzl' '*.star')
+          echo "files<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$files" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Evaluate each changed file
+        run: |
+          for f in ${{ steps.changed.outputs.files }}; do
+            echo "::group::Evaluating $f"
+            ./target/release/starlark "$f"
+            echo "::endgroup::"
+          done

@@ -1,0 +1,53 @@
+name: ci
+on:
+  push:
+  pull_request:
+  schedule:
+  - cron: '0 12 * * 1' # 12pm Monday
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macOS-latest]
+        toolchain: [stable]
+        include:
+          - toolchain: nightly
+            os: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    # Cargo checks out facebook/buck2 (a git dependency) with libgit2, which
+    # rejects that repository's deepest paths on Windows unless told otherwise.
+    - if: runner.os == 'Windows'
+      run: git config --global core.longpaths true
+    - uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: ${{ matrix.toolchain }}
+        components: clippy, rustfmt
+    # We use rustfmt 2.0 for formatting, which differs from the released
+    # version installed by Cargo
+    # - run: cargo fmt -- --check
+    - run: cargo clippy
+    - run: cargo build
+    - run: cargo test
+    # buck2 enables this feature for starlark and cargo unifies it across every
+    # crate there, hiding the APIs that are gated on it being off. Without this
+    # leg, code that only compiles with the feature off passes everything here
+    # and then breaks buck2's CI. Nightly only: buck2 builds on nightly, and one
+    # extra compile of the workspace is enough to cover a feature flag.
+    - run: cargo test --features starlark/pagable
+      if: matrix.os == 'ubuntu-latest' && matrix.toolchain == 'nightly'
+    - run: cargo bench
+    - run: rustup component add miri rust-src
+      if: matrix.toolchain == 'nightly'
+    - run: cargo miri test -p starlark --test miri
+      if: matrix.toolchain == 'nightly'
+      env:
+        MIRIFLAGS: -Zmiri-permissive-provenance -Zmiri-tree-borrows
+    # - uses: EmbarkStudios/cargo-deny-action@v1
+    #   if: matrix.os == 'ubuntu-latest' # Only works on Linux
+    #   with:
+    #     command: check bans sources
